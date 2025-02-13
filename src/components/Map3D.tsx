@@ -1,6 +1,6 @@
 import maplibregl, { MapLayerMouseEvent } from "maplibre-gl";
-import Map from "react-map-gl/maplibre";
-import { useState } from "react";
+import Map, { MapRef, NavigationControl } from "react-map-gl/maplibre";
+import { useState, useRef, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -39,18 +39,52 @@ const INITIAL_VIEW_STATE = {
 export default function Map3D() {
   const [popupInfo, setPopupInfo] = useState<PopupInfo | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(
+    null
+  );
+  const mapRef = useRef<MapRef>(null);
+
+  const resetSelectedBuilding = useCallback(() => {
+    if (selectedBuildingId && mapRef.current) {
+      mapRef.current.setFeatureState(
+        {
+          source: "osm-buildings",
+          sourceLayer: "building",
+          id: selectedBuildingId,
+        },
+        { selected: false }
+      );
+    }
+  }, [selectedBuildingId]);
 
   const displayBuildingInfo = (event: MapLayerMouseEvent) => {
     const feature = event.features && event.features[0];
 
     if (feature && feature.layer.id === "buildings-3d") {
+      // Reset previous selection
+      resetSelectedBuilding();
+
       const coordinates = event.lngLat;
+      const buildingId = feature.id as string;
+
+      // Set feature state for the new selection
+      if (mapRef.current?.getMap()) {
+        mapRef.current.getMap().setFeatureState(
+          {
+            source: "osm-buildings",
+            sourceLayer: "building",
+            id: buildingId,
+          },
+          { selected: true }
+        );
+      }
 
       const popupContent: PopupInfo = {
         coordinates: coordinates,
         properties: feature.properties as BuildingProperties,
       };
 
+      setSelectedBuildingId(buildingId);
       setPopupInfo(popupContent);
       setIsDialogOpen(true);
     }
@@ -59,7 +93,13 @@ export default function Map3D() {
   return (
     <div className="relative">
       <Map
+        ref={mapRef}
         mapLib={maplibregl}
+        onLoad={(event) => {
+          const map = event.target;
+          console.log(map);
+          // No need to set mapRef here as it's handled by the ref prop
+        }}
         initialViewState={INITIAL_VIEW_STATE}
         style={{ width: 1200, height: 800 }}
         mapStyle={{
@@ -93,23 +133,25 @@ export default function Map3D() {
               source: "osm-buildings",
               "source-layer": "building",
               paint: {
-                // Color buildings based on their height
                 "fill-extrusion-color": [
-                  "match",
-                  ["get", "type"],
-                  "residential",
-                  "#e8dacd",
-                  "commercial",
-                  "#c9b6a3",
-                  "industrial",
-                  "#a69989",
-                  "office",
-                  "#998b7d",
-                  "#a1907f", // default color
+                  "case",
+                  ["boolean", ["feature-state", "selected"], false],
+                  "#FFA500", // Highlight color for selected building
+                  [
+                    "match",
+                    ["get", "type"],
+                    "residential",
+                    "#e8dacd",
+                    "commercial",
+                    "#c9b6a3",
+                    "industrial",
+                    "#a69989",
+                    "office",
+                    "#998b7d",
+                    "#a1907f", // default color
+                  ],
                 ],
-                // Add ambient lighting effect
                 "fill-extrusion-opacity": 0.85,
-                // Add vertical gradient for more realism
                 "fill-extrusion-vertical-gradient": true,
                 "fill-extrusion-height": [
                   "case",
@@ -127,10 +169,22 @@ export default function Map3D() {
         }}
         interactiveLayerIds={["buildings-3d"]}
         onClick={displayBuildingInfo}
-      />
+      >
+        <NavigationControl position="top-right" />
+      </Map>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md">
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          setIsDialogOpen(open);
+
+          if (!open) {
+            resetSelectedBuilding();
+            setSelectedBuildingId(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md !duration-0 !translate-y-0">
           <DialogHeader>
             <DialogTitle>Building Information</DialogTitle>
             <DialogDescription>
@@ -143,7 +197,6 @@ export default function Map3D() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <span className="text-sm text-gray-500">Coordinates</span>
-
                   <p className="font-medium">
                     {popupInfo.coordinates.lng.toFixed(4)},{" "}
                     {popupInfo.coordinates.lat.toFixed(4)}
